@@ -3,19 +3,28 @@ package handlers
 import (
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 
+	"github.com/abhishek-z2/shrnk/internal/cache"
 	"github.com/abhishek-z2/shrnk/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/redis/go-redis/v9"
 )
+
+type RedisCache struct {
+	client *redis.Client
+}
 
 type Handler struct {
 	store *store.PostgresStore
+	cache *cache.RedisCache
 }
 
-func NewHandler(store *store.PostgresStore) *Handler {
+func NewHandler(store *store.PostgresStore, cache *cache.RedisCache) *Handler {
 	return &Handler{
 		store: store,
+		cache: cache,
 	}
 }
 
@@ -54,7 +63,19 @@ func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 	code := chi.URLParam(r, "code")
-	longURL, err := h.store.GetURL(r.Context(), code)
+
+	longURL, err := h.cache.Get(r.Context(), code)
+	if err == nil {
+		http.Redirect(w, r, longURL, http.StatusFound)
+		return
+	}
+
+	if !errors.Is(err, redis.Nil) {
+		http.Error(w, "cache-error", http.StatusInternalServerError)
+		return
+	}
+
+	longURL, err = h.store.GetURL(r.Context(), code)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
@@ -62,6 +83,9 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 		}
 		http.Error(w, "failed to get URL", http.StatusInternalServerError)
 		return
+	}
+	if err = h.cache.Set(r.Context(), code, longURL); err != nil {
+		log.Printf("failed to cache URL %q: %v", code, err)
 	}
 	http.Redirect(w, r, longURL, http.StatusFound)
 }

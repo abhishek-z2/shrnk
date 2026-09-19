@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/abhishek-z2/shrnk/internal/cache"
 	"github.com/abhishek-z2/shrnk/internal/handlers"
 	"github.com/abhishek-z2/shrnk/internal/store"
 )
@@ -22,7 +23,6 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-
 	defer pool.Close()
 
 	if err := pool.Ping(ctx); err != nil {
@@ -30,8 +30,8 @@ func main() {
 	}
 
 	db := store.NewPostgresStore(pool)
-	h := handlers.NewHandler(db)
-
+	rdb := cache.NewRedisCache()
+	h := handlers.NewHandler(db, rdb)
 	r := chi.NewRouter()
 
 	r.Post("/api/shorten", h.Shorten)
