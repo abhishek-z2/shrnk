@@ -2,11 +2,13 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
+	"net/http"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/abhishek-z2/shrnk/internal/handlers"
 	"github.com/abhishek-z2/shrnk/internal/store"
 )
 
@@ -17,32 +19,28 @@ func main() {
 		ctx,
 		"postgres://postgres:postgres@localhost:5433/shrnk",
 	)
-
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	defer pool.Close()
 
-	err = pool.Ping(ctx)
-	if err != nil {
+	if err := pool.Ping(ctx); err != nil {
 		log.Fatal(err)
 	}
 
 	db := store.NewPostgresStore(pool)
+	h := handlers.NewHandler(db)
 
-	id, code, err := db.CreateURL(
-		ctx,
-		"https://example.com",
-	)
-	if err != nil {
+	r := chi.NewRouter()
+
+	r.Post("/api/shorten", h.Shorten)
+	r.Get("/{code}", h.Redirect)
+
+	log.Println("server listening on :8080")
+
+	if err := http.ListenAndServe(":8080", r); err != nil {
 		log.Fatal(err)
 	}
-	fmt.Printf("id=%d code=%s\n", id, code)
 
-	longURL, err := db.GetURL(ctx, "h")
-	if err != nil {
-		log.Fatal(err)
-	}
-	fmt.Printf("longURL corresponding to A is %v", longURL)
 }

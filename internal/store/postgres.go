@@ -2,7 +2,11 @@ package store
 
 import (
 	"context"
+	"errors"
+	//"log"
+
 	"github.com/abhishek-z2/shrnk/internal/shortcode"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -52,4 +56,26 @@ func (s *PostgresStore) CreateURL(ctx context.Context, longURL string) (int64, s
 	}
 
 	return id, shortcode, nil
+}
+
+var ErrNotFound = errors.New("url not found")
+
+func (s *PostgresStore) GetURL(ctx context.Context, shortCode string) (string, error) {
+	var longURL string
+
+	err := s.db.QueryRow(
+		ctx,
+		`SELECT long_url
+		FROM urls 
+		WHERE short_code=($1)`,
+		shortCode,
+	).Scan(&longURL)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return longURL, nil
 }
