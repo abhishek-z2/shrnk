@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"errors"
+
 	//"log"
 
 	"github.com/abhishek-z2/shrnk/internal/shortcode"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -78,4 +80,29 @@ func (s *PostgresStore) GetURL(ctx context.Context, shortCode string) (string, e
 	}
 
 	return longURL, nil
+}
+
+func (s *PostgresStore) CreateAPIKey(ctx context.Context, id uuid.UUID, keyHash string) error {
+	_, err := s.db.Exec(
+		ctx,
+		`INSERT INTO api_keys (id ,key_hash)
+		VALUES ($1,$2)`,
+		id,
+		keyHash,
+	)
+	return err
+}
+
+func (s *PostgresStore) FindAPIKey(ctx context.Context, keyHash string) (uuid.UUID, error) {
+	var id uuid.UUID
+	err := s.db.QueryRow(
+		ctx,
+		`SELECT id FROM api_keys
+		WHERE key_hash = $1`,
+		keyHash,
+	).Scan(&id)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return uuid.Nil, ErrNotFound
+	}
+	return id, err
 }

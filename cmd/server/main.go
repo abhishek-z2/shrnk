@@ -8,6 +8,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/abhishek-z2/shrnk/internal/auth"
 	"github.com/abhishek-z2/shrnk/internal/cache"
 	"github.com/abhishek-z2/shrnk/internal/handlers"
 	"github.com/abhishek-z2/shrnk/internal/store"
@@ -34,7 +35,7 @@ func main() {
 	h := handlers.NewHandler(db, rdb)
 	r := chi.NewRouter()
 
-	r.Post("/api/shorten", h.Shorten)
+	r.With(auth.Middleware(db)).Post("/api/shorten", h.Shorten)
 	r.Get("/{code}", h.Redirect)
 
 	log.Println("server listening on :8080")
