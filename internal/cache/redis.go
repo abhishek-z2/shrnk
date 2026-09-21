@@ -9,11 +9,7 @@ type RedisCache struct {
 	client *redis.Client
 }
 
-func NewRedisCache() *RedisCache {
-	client := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-
+func NewRedisCache(client *redis.Client) *RedisCache {
 	return &RedisCache{
 		client: client,
 	}

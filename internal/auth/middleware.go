@@ -1,9 +1,16 @@
 package auth
 
 import (
-	"github.com/abhishek-z2/shrnk/internal/store"
+	"context"
 	"net/http"
+
+	"github.com/abhishek-z2/shrnk/internal/store"
+	"github.com/google/uuid"
 )
+
+type contextKey string
+
+const apiKeyIDKey contextKey = "apiKeyID"
 
 func Middleware(db *store.PostgresStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -17,7 +24,7 @@ func Middleware(db *store.PostgresStore) func(http.Handler) http.Handler {
 
 			keyHash := HashKey(key)
 
-			_, err := db.FindAPIKey(r.Context(), keyHash)
+			apiKeyID, err := db.FindAPIKey(r.Context(), keyHash)
 			if err != nil {
 				if err == store.ErrNotFound {
 					http.Error(w, "invalid API key", http.StatusUnauthorized)
@@ -27,7 +34,15 @@ func Middleware(db *store.PostgresStore) func(http.Handler) http.Handler {
 				return
 			}
 
-			next.ServeHTTP(w, r)
+			ctx := context.WithValue(r.Context(), apiKeyIDKey, apiKeyID)
+			next.ServeHTTP(w, r.WithContext(ctx))
 		})
 	}
+}
+
+func GetAPIKeyID(ctx context.Context) (uuid.UUID, bool) {
+	value := ctx.Value(apiKeyIDKey)
+
+	apiKeyID, ok := value.(uuid.UUID)
+	return apiKeyID, ok
 }
