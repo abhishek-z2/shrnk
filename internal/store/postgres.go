@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"time"
 
 	//"log"
 
@@ -22,7 +23,14 @@ func NewPostgresStore(db *pgxpool.Pool) *PostgresStore {
 	}
 }
 
-func (s *PostgresStore) CreateURL(ctx context.Context, longURL string) (int64, string, error) {
+type URLRecord struct {
+	ID        int64
+	ShortCode string
+	LongURL   string
+	ExpiresAt time.Time
+}
+
+func (s *PostgresStore) CreateURL(ctx context.Context, longURL string, expiresAt time.Time) (int64, string, error) {
 	tx, err := s.db.Begin(ctx)
 	if err != nil {
 		return 0, "", err
@@ -43,11 +51,12 @@ func (s *PostgresStore) CreateURL(ctx context.Context, longURL string) (int64, s
 
 	_, err = tx.Exec(
 		ctx,
-		`INSERT INTO urls(id,short_code,long_url)
-		VALUES ($1,$2,$3)`,
+		`INSERT INTO urls(id,short_code,long_url,expires_at)
+		VALUES ($1,$2,$3,$4)`,
 		id,
 		shortcode,
 		longURL,
+		expiresAt,
 	)
 	if err != nil {
 		return 0, "", err
@@ -62,24 +71,29 @@ func (s *PostgresStore) CreateURL(ctx context.Context, longURL string) (int64, s
 
 var ErrNotFound = errors.New("url not found")
 
-func (s *PostgresStore) GetURL(ctx context.Context, shortCode string) (string, error) {
-	var longURL string
+func (s *PostgresStore) GetURL(ctx context.Context, shortCode string) (URLRecord, error) {
+	var record URLRecord
 
 	err := s.db.QueryRow(
 		ctx,
-		`SELECT long_url
+		`SELECT id,short_code,long_url,expires_at
 		FROM urls 
 		WHERE short_code=($1)`,
 		shortCode,
-	).Scan(&longURL)
+	).Scan(
+		&record.ID,
+		&record.ShortCode,
+		&record.LongURL,
+		&record.ExpiresAt,
+	)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return "", ErrNotFound
+		return URLRecord{}, ErrNotFound
 	}
 	if err != nil {
-		return "", err
+		return URLRecord{}, err
 	}
 
-	return longURL, nil
+	return record, nil
 }
 
 func (s *PostgresStore) CreateAPIKey(ctx context.Context, id uuid.UUID, keyHash string) error {

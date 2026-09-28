@@ -2,6 +2,8 @@ package cache
 
 import (
 	"context"
+	"time"
+
 	"github.com/redis/go-redis/v9"
 )
 
@@ -19,6 +21,6 @@ func (c *RedisCache) Get(ctx context.Context, key string) (string, error) {
 	return c.client.Get(ctx, key).Result()
 }
 
-func (c *RedisCache) Set(ctx context.Context, key string, value string) error {
-	return c.client.Set(ctx, key, value, 0).Err()
+func (c *RedisCache) Set(ctx context.Context, key string, value string, ttl time.Duration) error {
+	return c.client.Set(ctx, key, value, ttl).Err()
 }

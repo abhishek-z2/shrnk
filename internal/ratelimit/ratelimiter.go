@@ -3,9 +3,8 @@ package ratelimit
 import (
 	"context"
 	_ "embed"
-	"time"
-
 	"github.com/redis/go-redis/v9"
+	"time"
 )
 
 //go:embed token_bucket.lua

@@ -5,11 +5,17 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/abhishek-z2/shrnk/internal/cache"
 	"github.com/abhishek-z2/shrnk/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
+)
+
+const (
+	minURLLifetime = time.Minute
+	maxURLifetime  = 30 * 24 * time.Hour
 )
 
 type Handler struct {
@@ -25,11 +31,19 @@ func NewHandler(store *store.PostgresStore, cache *cache.RedisCache) *Handler {
 }
 
 type ShortenRequest struct {
-	URL string `json:"url"`
+	URL       string `json:"url"`
+	ExpiresIn string `json:"expires_in"`
 }
 
 type ShortenResponse struct {
 	ShortCode string `json:"short_code"`
+}
+
+type URLRecord struct {
+	ID        int64
+	ShortCode string
+	LongURL   string
+	ExpiresAt time.Time
 }
 
 func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +59,20 @@ func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, shortCode, err := h.store.CreateURL(r.Context(), req.URL)
+	duration, err := time.ParseDuration(req.ExpiresIn)
+	if err != nil {
+		http.Error(w, "invalid expires_in", http.StatusBadRequest)
+		return
+	}
+
+	if duration < minURLLifetime || duration > maxURLifetime {
+		http.Error(w, "expires_in must be between 1 minute and 30 days", http.StatusBadRequest)
+		return
+	}
+
+	expires_at := time.Now().Add(duration)
+
+	_, shortCode, err := h.store.CreateURL(r.Context(), req.URL, expires_at)
 	if err != nil {
 		http.Error(w, "failed to create short URL", http.StatusInternalServerError)
 		return
@@ -71,7 +98,10 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	longURL, err = h.store.GetURL(r.Context(), code)
+	var record store.URLRecord
+
+	record, err = h.store.GetURL(r.Context(), code)
+
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			http.NotFound(w, r)
@@ -80,8 +110,14 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "failed to get URL", http.StatusInternalServerError)
 		return
 	}
-	if err = h.cache.Set(r.Context(), code, longURL); err != nil {
+	if record.ExpiresAt.Before(time.Now()) {
+		http.Error(w, "code has expired", http.StatusBadRequest)
+		return
+	}
+
+	ttl := time.Until(record.ExpiresAt)
+	if err = h.cache.Set(r.Context(), code, record.LongURL, ttl); err != nil {
 		log.Printf("failed to cache URL %q: %v", code, err)
 	}
-	http.Redirect(w, r, longURL, http.StatusFound)
+	http.Redirect(w, r, record.LongURL, http.StatusFound)
 }
