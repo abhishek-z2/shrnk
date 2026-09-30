@@ -39,13 +39,6 @@ type ShortenResponse struct {
 	ShortCode string `json:"short_code"`
 }
 
-type URLRecord struct {
-	ID        int64
-	ShortCode string
-	LongURL   string
-	ExpiresAt time.Time
-}
-
 func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
 	var req ShortenRequest
 

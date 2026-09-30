@@ -120,3 +120,12 @@ func (s *PostgresStore) FindAPIKey(ctx context.Context, keyHash string) (uuid.UU
 	}
 	return id, err
 }
+
+func (s *PostgresStore) SweepExpired(ctx context.Context) error {
+	_, err := s.db.Exec(
+		ctx,
+		`DELETE FROM urls
+		WHERE expires_at <= now()`,
+	)
+	return err
+}
