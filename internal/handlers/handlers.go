@@ -63,9 +63,9 @@ func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	expires_at := time.Now().Add(duration)
+	expiresAt := time.Now().Add(duration)
 
-	_, shortCode, err := h.store.CreateURL(r.Context(), req.URL, expires_at)
+	_, shortCode, err := h.store.CreateURL(r.Context(), req.URL, expiresAt)
 	if err != nil {
 		http.Error(w, "failed to create short URL", http.StatusInternalServerError)
 		return
