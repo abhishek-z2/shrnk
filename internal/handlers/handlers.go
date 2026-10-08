@@ -1,13 +1,13 @@
 package handlers
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
 	"time"
 
-	"github.com/abhishek-z2/shrnk/internal/cache"
 	"github.com/abhishek-z2/shrnk/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
@@ -18,12 +18,22 @@ const (
 	maxURLifetime  = 30 * 24 * time.Hour
 )
 
-type Handler struct {
-	store *store.PostgresStore
-	cache *cache.RedisCache
+type URLStore interface {
+	GetURL(ctx context.Context, shortCode string) (store.URLRecord, error)
+	CreateURL(ctx context.Context, longURL string, expiresAt time.Time) (int64, string, error)
 }
 
-func NewHandler(store *store.PostgresStore, cache *cache.RedisCache) *Handler {
+type URLCache interface {
+	Get(ctx context.Context, key string) (string, error)
+	Set(ctx context.Context, key string, value string, ttl time.Duration) error
+}
+
+type Handler struct {
+	store URLStore
+	cache URLCache
+}
+
+func NewHandler(store URLStore, cache URLCache) *Handler {
 	return &Handler{
 		store: store,
 		cache: cache,
