@@ -260,6 +260,32 @@ func TestShorten_InvalidJSON(t *testing.T) {
 	}
 }
 
+func TestShorten_MissingURL(t *testing.T) {
+	store := &fakeStore{}
+	cache := &fakeCache{}
+
+	h := NewHandler(store, cache)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/shorten",
+		strings.NewReader(`{"expires_in":"1h"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+
+	h.Shorten(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	if store.createURLCalled {
+		t.Error("expected CreateURL not to be called when URL is missing")
+	}
+}
+
 /*func TestRedirect_ExpiredURL(t *testing.T) {
 
 }*/
