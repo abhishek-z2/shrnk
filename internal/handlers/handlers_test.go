@@ -2,13 +2,14 @@ package handlers
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
-	"github.com/abhishek-z2/shrnk/internal/cache"
 	"github.com/abhishek-z2/shrnk/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
@@ -34,9 +35,10 @@ func (f *fakeCache) Set(ctx context.Context, key string, value string, ttl time.
 }
 
 type fakeStore struct {
-	getURLCalled bool
-	url          store.URLRecord
-	err          error
+	getURLCalled    bool
+	createURLCalled bool
+	url             store.URLRecord
+	err             error
 }
 
 func (f *fakeStore) GetURL(ctx context.Context, shortCode string) (store.URLRecord, error) {
@@ -45,6 +47,7 @@ func (f *fakeStore) GetURL(ctx context.Context, shortCode string) (store.URLReco
 }
 
 func (f *fakeStore) CreateURL(ctx context.Context, longURL string, expiresAt time.Time) (int64, string, error) {
+	f.createURLCalled = true
 	return 0, "", nil
 }
 
@@ -161,3 +164,102 @@ func TestRedirect__NotFound(t *testing.T) {
 		t.Error("expected store to be called when cache misses")
 	}
 }
+
+func TestRedirect_ExpiredURL(t *testing.T) {
+	store := &fakeStore{
+		url: store.URLRecord{
+			LongURL:   "https://example.com",
+			ExpiresAt: time.Now().Add(-time.Minute),
+		},
+	}
+	cache := &fakeCache{
+		err: redis.Nil,
+	}
+
+	h := NewHandler(store, cache)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("code", "expired")
+
+	req := httptest.NewRequest(http.MethodGet, "/expired", nil)
+	req = req.WithContext(context.WithValue(
+		req.Context(),
+		chi.RouteCtxKey,
+		rctx,
+	))
+
+	rec := httptest.NewRecorder()
+
+	h.Redirect(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	if got := rec.Header().Get("Location"); got != "" {
+		t.Errorf("expected no Location header, got %q", got)
+	}
+
+	if cache.setCalled {
+		t.Error("expected expired URL not to be cached")
+	}
+}
+
+func TestRedirect_CacheError(t *testing.T) {
+	store := &fakeStore{}
+	cache := &fakeCache{
+		err: errors.New("redis connection failed"),
+	}
+
+	h := NewHandler(store, cache)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("code", "abc123")
+
+	req := httptest.NewRequest(http.MethodGet, "/abc123", nil)
+	req = req.WithContext(context.WithValue(
+		req.Context(),
+		chi.RouteCtxKey,
+		rctx,
+	))
+
+	rec := httptest.NewRecorder()
+
+	h.Redirect(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d", http.StatusInternalServerError, rec.Code)
+	}
+
+	if store.getURLCalled {
+		t.Error("expected store not to be called when cache returns an unexpected error")
+	}
+}
+
+func TestShorten_InvalidJSON(t *testing.T) {
+	store := &fakeStore{}
+	cache := &fakeCache{}
+
+	h := NewHandler(store, cache)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/shorten",
+		strings.NewReader(`{"url":`),
+	)
+	rec := httptest.NewRecorder()
+
+	h.Shorten(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	if store.createURLCalled {
+		t.Error("expected CreateURL not to be called for invalid JSON")
+	}
+}
+
+/*func TestRedirect_ExpiredURL(t *testing.T) {
+
+}*/
