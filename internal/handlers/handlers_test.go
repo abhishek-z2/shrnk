@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abhishek-z2/shrnk/internal/cache"
 	"github.com/abhishek-z2/shrnk/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/redis/go-redis/v9"
@@ -35,11 +36,12 @@ func (f *fakeCache) Set(ctx context.Context, key string, value string, ttl time.
 type fakeStore struct {
 	getURLCalled bool
 	url          store.URLRecord
+	err          error
 }
 
 func (f *fakeStore) GetURL(ctx context.Context, shortCode string) (store.URLRecord, error) {
 	f.getURLCalled = true
-	return f.url, nil
+	return f.url, f.err
 }
 
 func (f *fakeStore) CreateURL(ctx context.Context, longURL string, expiresAt time.Time) (int64, string, error) {
@@ -124,5 +126,38 @@ func TestRedirect_CacheMiss(t *testing.T) {
 
 	if cache.setValue != "https://example.com" {
 		t.Errorf("expected cache value %q, got %q", "https://example.com", cache.setValue)
+	}
+}
+
+func TestRedirect__NotFound(t *testing.T) {
+	store := &fakeStore{
+		err: store.ErrNotFound,
+	}
+	cache := &fakeCache{
+		err: redis.Nil,
+	}
+
+	h := NewHandler(store, cache)
+
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("code", "missing")
+
+	req := httptest.NewRequest(http.MethodGet, "/missing", nil)
+	req = req.WithContext(context.WithValue(
+		req.Context(),
+		chi.RouteCtxKey,
+		rctx,
+	))
+
+	rec := httptest.NewRecorder()
+
+	h.Redirect(rec, req)
+
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("expected status %d, got %d", http.StatusNotFound, rec.Code)
+	}
+
+	if !store.getURLCalled {
+		t.Error("expected store to be called when cache misses")
 	}
 }
