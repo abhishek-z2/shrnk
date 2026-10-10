@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -39,6 +40,11 @@ type fakeStore struct {
 	createURLCalled bool
 	url             store.URLRecord
 	err             error
+
+	createShortCode string
+	createErr       error
+	createLongURL   string
+	createExpiresAt time.Time
 }
 
 func (f *fakeStore) GetURL(ctx context.Context, shortCode string) (store.URLRecord, error) {
@@ -48,7 +54,9 @@ func (f *fakeStore) GetURL(ctx context.Context, shortCode string) (store.URLReco
 
 func (f *fakeStore) CreateURL(ctx context.Context, longURL string, expiresAt time.Time) (int64, string, error) {
 	f.createURLCalled = true
-	return 0, "", nil
+	f.createLongURL = longURL
+	f.createExpiresAt = expiresAt
+	return 0, f.createShortCode, f.createErr
 }
 
 func TestRedirect_CacheHit(t *testing.T) {
@@ -355,6 +363,58 @@ func TestShorten_ExpiresInTooLong(t *testing.T) {
 
 	if store.createURLCalled {
 		t.Error("expected CreateURL not to be called when expires_in is too long")
+	}
+}
+
+func TestShorten_Success(t *testing.T) {
+	store := &fakeStore{
+		createShortCode: "abc123",
+	}
+	cache := &fakeCache{}
+	h := NewHandler(store, cache)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/shorten",
+		strings.NewReader(
+			`{"url":"https://example.com","expires_in":"1h"}`,
+		),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	h.Shorten(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected status %d, got %d", http.StatusOK, rec.Code)
+	}
+
+	if !store.createURLCalled {
+		t.Fatal("expected CreateURL to be called")
+	}
+
+	if store.createLongURL != "https://example.com" {
+		t.Errorf("expected long URL %q, got %q",
+			"https://example.com", store.createLongURL)
+	}
+
+	if store.createExpiresAt.Before(time.Now().Add(59*time.Minute)) ||
+		store.createExpiresAt.After(time.Now().Add(61*time.Minute)) {
+		t.Errorf("expected expiration roughly one hour from now, got %v",
+			store.createExpiresAt)
+	}
+
+	if got := rec.Header().Get("Content-Type"); got != "application/json" {
+		t.Errorf("expected Content-Type application/json, got %q", got)
+	}
+
+	var response ShortenResponse
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("failed to decode response: %v", err)
+	}
+
+	if response.ShortCode != "abc123" {
+		t.Errorf("expected short code %q, got %q", "abc123", response.ShortCode)
 	}
 }
 
