@@ -334,6 +334,30 @@ func TestShorten_ExpiresInTooShort(t *testing.T) {
 	}
 }
 
+func TestShorten_ExpiresInTooLong(t *testing.T) {
+	store := &fakeStore{}
+	cache := &fakeCache{}
+	h := NewHandler(store, cache)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/shorten",
+		strings.NewReader(`{"url":"https://example.com","expires_in":"31d"}`),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	h.Shorten(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Errorf("expected status %d, got %d", http.StatusBadRequest, rec.Code)
+	}
+
+	if store.createURLCalled {
+		t.Error("expected CreateURL not to be called when expires_in is too long")
+	}
+}
+
 /*func TestRedirect_ExpiredURL(t *testing.T) {
 
 }*/
