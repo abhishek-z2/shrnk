@@ -418,6 +418,35 @@ func TestShorten_Success(t *testing.T) {
 	}
 }
 
+func TestShorten_StoreError(t *testing.T) {
+	store := &fakeStore{
+		createErr: errors.New("database connection failed"),
+	}
+	cache := &fakeCache{}
+	h := NewHandler(store, cache)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/shorten",
+		strings.NewReader(
+			`{"url":"https://example.com","expires_in":"1h"}`,
+		),
+	)
+	req.Header.Set("Content-Type", "application/json")
+
+	rec := httptest.NewRecorder()
+	h.Shorten(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Errorf("expected status %d, got %d",
+			http.StatusInternalServerError, rec.Code)
+	}
+
+	if !store.createURLCalled {
+		t.Error("expected CreateURL to be called")
+	}
+}
+
 /*func TestRedirect_ExpiredURL(t *testing.T) {
 
 }*/
