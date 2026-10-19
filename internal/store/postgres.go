@@ -69,7 +69,7 @@ func (s *PostgresStore) CreateURL(ctx context.Context, longURL string, expiresAt
 	return id, shortcode, nil
 }
 
-var ErrNotFound = errors.New("url not found")
+var ErrNotFound = errors.New("resource not found")
 
 func (s *PostgresStore) GetURL(ctx context.Context, shortCode string) (URLRecord, error) {
 	var record URLRecord
