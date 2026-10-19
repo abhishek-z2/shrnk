@@ -1,0 +1,7 @@
+CREATE TABLE sessions (
+	id UUID PRIMARY KEY, 
+	user_id BIGINT NOT NULL REFERENCES users(id),
+	token_hash TEXT UNIQUE NOT NULL,
+	expires_at TIMESTAMPTZ NOT NULL , 
+	created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
