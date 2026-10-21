@@ -40,6 +40,17 @@ type AuthStore interface {
 		tokenHash string,
 		expiresAt time.Time,
 	) (store.User, error)
+	GetUserByEmail(
+		ctx context.Context,
+		email string,
+	) (store.User, error)
+	CreateSession(
+		ctx context.Context,
+		id uuid.UUID,
+		userID int64,
+		tokenHash string,
+		expiresAt time.Time,
+	) error
 }
 
 type Handler struct {
@@ -217,5 +228,84 @@ func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(map[string]string{ // use map when sending one-off payloads (like alerts,succes messages)
 		"message": "account created",
+	})
+}
+
+type LoginRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
+	var req LoginRequest
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+
+	if req.Email == "" || req.Password == "" {
+		http.Error(w, "valid email or password is required", http.StatusBadRequest)
+		return
+	}
+
+	var user store.User
+
+	user, err := h.authStore.GetUserByEmail(r.Context(), req.Email)
+	if err != nil {
+		http.Error(w, "user does not exist", http.StatusUnauthorized)
+	}
+
+	match, err := auth.VerifyPassword(req.Password, user.PasswordHash)
+	if err != nil {
+		log.Printf("login: verifying password hash: %v", err)
+		http.Error(w, "invalid email or password", http.StatusUnauthorized)
+		return
+	}
+	if !match {
+		http.Error(w, "invalid email or password", http.StatusUnauthorized)
+		return
+	}
+
+	token, err := auth.GenerateSessionToken()
+	if err != nil {
+		log.Printf("login: generating session token: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	sessionID := uuid.New()
+	tokenHash := auth.HashSessionToken(token)
+	expiresAt := time.Now().Add(7 * 24 * time.Hour)
+
+	if err := h.authStore.CreateSession(
+		r.Context(),
+		sessionID,
+		user.ID,
+		tokenHash,
+		expiresAt,
+	); err != nil {
+		log.Printf("login: creating session: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	http.SetCookie(
+		w,
+		&http.Cookie{
+			Name:     "session",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   false,
+			SameSite: http.SameSiteLaxMode,
+			Expires:  expiresAt,
+		})
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	json.NewEncoder(w).Encode(map[string]string{
+		"message": "login successful",
 	})
 }

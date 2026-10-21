@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/abhishek-z2/shrnk/internal/auth"
 	"github.com/abhishek-z2/shrnk/internal/store"
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
@@ -461,6 +462,19 @@ type fakeAuthStore struct {
 		tokenHash string,
 		expiresAt time.Time,
 	) (store.User, error)
+
+	getUserByEmailFunc func(
+		ctx context.Context,
+		email string,
+	) (store.User, error)
+
+	createSessionFunc func(
+		ctx context.Context,
+		id uuid.UUID,
+		userID int64,
+		tokenHash string,
+		expiresAt time.Time,
+	) error
 }
 
 func (f *fakeAuthStore) CreateUserWithSession(
@@ -479,6 +493,29 @@ func (f *fakeAuthStore) CreateUserWithSession(
 		tokenHash,
 		expiresAt,
 	)
+}
+
+func (f *fakeAuthStore) CreateSession(
+	ctx context.Context,
+	id uuid.UUID,
+	userID int64,
+	tokenHash string,
+	expiresAt time.Time,
+) error {
+	if f.createSessionFunc == nil {
+		return nil
+	}
+	return f.createSessionFunc(ctx, id, userID, tokenHash, expiresAt)
+}
+
+func (f *fakeAuthStore) GetUserByEmail(
+	ctx context.Context,
+	email string,
+) (store.User, error) {
+	if f.getUserByEmailFunc == nil {
+		return store.User{}, store.ErrNotFound
+	}
+	return f.getUserByEmailFunc(ctx, email)
 }
 
 func TestHandler_Signup(t *testing.T) {
@@ -681,5 +718,177 @@ func TestHandler_SignupDuplicateEmail(t *testing.T) {
 
 	if rec.Code != http.StatusConflict {
 		t.Errorf("expected status 409, got %d", rec.Code)
+	}
+}
+
+func TestHandler_Login(t *testing.T) {
+	const password = "correct-password"
+
+	passwordHash, err := auth.HashPassword(password)
+	if err != nil {
+		t.Fatalf("hash password: %v", err)
+	}
+
+	user := store.User{
+		ID:           42,
+		Email:        "test@example.com",
+		PasswordHash: passwordHash,
+	}
+
+	tests := []struct {
+		name            string
+		email           string
+		password        string
+		lookupErr       error
+		sessionErr      error
+		wantStatus      int
+		wantCookie      bool
+		wantSessionCall bool
+	}{
+		{
+			name:            "successful login",
+			email:           "test@example.com",
+			password:        password,
+			wantStatus:      http.StatusOK,
+			wantCookie:      true,
+			wantSessionCall: true,
+		},
+		{
+			name:       "unknown email",
+			email:      "unknown@example.com",
+			password:   password,
+			lookupErr:  store.ErrNotFound,
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:       "incorrect password",
+			email:      "test@example.com",
+			password:   "wrong-password",
+			wantStatus: http.StatusUnauthorized,
+		},
+		{
+			name:            "session creation failure",
+			email:           "test@example.com",
+			password:        password,
+			sessionErr:      errors.New("database unavailable"),
+			wantStatus:      http.StatusInternalServerError,
+			wantSessionCall: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sessionCalled := false
+			var savedSessionID uuid.UUID
+			var savedUserID int64
+			var savedTokenHash string
+			var savedExpiry time.Time
+
+			authStore := &fakeAuthStore{
+				getUserByEmailFunc: func(
+					ctx context.Context,
+					email string,
+				) (store.User, error) {
+					if tt.lookupErr != nil {
+						return store.User{}, tt.lookupErr
+					}
+					return user, nil
+				},
+				createSessionFunc: func(
+					ctx context.Context,
+					id uuid.UUID,
+					userID int64,
+					tokenHash string,
+					expiresAt time.Time,
+				) error {
+					sessionCalled = true
+					savedSessionID = id
+					savedUserID = userID
+					savedTokenHash = tokenHash
+					savedExpiry = expiresAt
+					return tt.sessionErr
+				},
+			}
+
+			handler := NewHandler(nil, nil, authStore)
+
+			body := strings.NewReader(
+				`{"email":"` + tt.email +
+					`","password":"` + tt.password + `"}`,
+			)
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/auth/login",
+				body,
+			)
+			req.Header.Set("Content-Type", "application/json")
+
+			rec := httptest.NewRecorder()
+			handler.Login(rec, req)
+
+			if rec.Code != tt.wantStatus {
+				t.Fatalf(
+					"status = %d, want %d; body = %s",
+					rec.Code,
+					tt.wantStatus,
+					rec.Body.String(),
+				)
+			}
+
+			if sessionCalled != tt.wantSessionCall {
+				t.Fatalf(
+					"sessionCalled = %v, want %v",
+					sessionCalled,
+					tt.wantSessionCall,
+				)
+			}
+
+			cookies := rec.Result().Cookies()
+			var sessionCookie *http.Cookie
+
+			for _, cookie := range cookies {
+				if cookie.Name == "session" {
+					sessionCookie = cookie
+					break
+				}
+			}
+
+			if (sessionCookie != nil) != tt.wantCookie {
+				t.Fatalf(
+					"session cookie present = %v, want %v",
+					sessionCookie != nil,
+					tt.wantCookie,
+				)
+			}
+
+			if tt.name == "successful login" {
+				if sessionCookie.Value == "" {
+					t.Fatal("session cookie has an empty value")
+				}
+				if !sessionCookie.HttpOnly {
+					t.Fatal("session cookie must be HttpOnly")
+				}
+				if sessionCookie.Path != "/" {
+					t.Fatalf("cookie path = %q, want /", sessionCookie.Path)
+				}
+
+				if strings.Contains(rec.Body.String(), sessionCookie.Value) {
+					t.Fatal("response body must not expose the session token")
+				}
+
+				if savedSessionID == uuid.Nil {
+					t.Fatal("session ID was not generated")
+				}
+				if savedUserID != user.ID {
+					t.Fatalf("saved user ID = %d, want %d", savedUserID, user.ID)
+				}
+				if savedTokenHash != auth.HashSessionToken(sessionCookie.Value) {
+					t.Fatal("stored token hash does not match cookie token")
+				}
+				if !savedExpiry.After(time.Now()) {
+					t.Fatal("session expiry must be in the future")
+				}
+			}
+		})
 	}
 }

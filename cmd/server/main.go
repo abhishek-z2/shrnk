@@ -58,8 +58,8 @@ func main() {
 		auth.Middleware(db),
 		ratelimit.Middleware(l),
 	).Post("/api/shorten", h.Shorten)
-
 	r.Post("/api/auth/signup", h.Signup)
+	r.Post("/api/auth/login", h.Login)
 
 	r.Get("/{code}", h.Redirect)
 
