@@ -588,3 +588,98 @@ func TestHandler_Signup(t *testing.T) {
 		t.Errorf("expected cookie path /, got %q", cookie.Path)
 	}
 }
+
+func TestHandler_SignupRejectsInvalidInput(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "invalid JSON",
+			body: `{"email":`,
+		},
+		{
+			name: "missing email",
+			body: `{"password":"test-password-123"}`,
+		},
+		{
+			name: "invalid email",
+			body: `{"email":"not-an-email","password":"test-password-123"}`,
+		},
+		{
+			name: "short password",
+			body: `{"email":"test@example.com","password":"short"}`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			storeCalled := false
+
+			authStore := &fakeAuthStore{
+				createUserWithSessionFunc: func(
+					ctx context.Context,
+					email, passwordHash string,
+					sessionID uuid.UUID,
+					tokenHash string,
+					expiresAt time.Time,
+				) (store.User, error) {
+					storeCalled = true
+					return store.User{}, nil
+				},
+			}
+
+			h := NewHandler(nil, nil, authStore)
+			req := httptest.NewRequest(
+				http.MethodPost,
+				"/api/auth/signup",
+				strings.NewReader(tt.body),
+			)
+			rec := httptest.NewRecorder()
+
+			h.Signup(rec, req)
+
+			if rec.Code != http.StatusBadRequest {
+				t.Errorf(
+					"expected status 400, got %d",
+					rec.Code,
+				)
+			}
+
+			// Invalid requests should never reach the database.
+			if storeCalled {
+				t.Error("store was called for invalid input")
+			}
+		})
+	}
+}
+
+func TestHandler_SignupDuplicateEmail(t *testing.T) {
+	authStore := &fakeAuthStore{
+		createUserWithSessionFunc: func(
+			ctx context.Context,
+			email, passwordHash string,
+			sessionID uuid.UUID,
+			tokenHash string,
+			expiresAt time.Time,
+		) (store.User, error) {
+			return store.User{}, errors.New("duplicate email")
+		},
+	}
+
+	h := NewHandler(nil, nil, authStore)
+
+	body := `{"email":"test@example.com","password":"test-password-123"}`
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/auth/signup",
+		strings.NewReader(body),
+	)
+	rec := httptest.NewRecorder()
+
+	h.Signup(rec, req)
+
+	if rec.Code != http.StatusConflict {
+		t.Errorf("expected status 409, got %d", rec.Code)
+	}
+}
