@@ -6,10 +6,13 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"strings"
 	"time"
 
+	"github.com/abhishek-z2/shrnk/internal/auth"
 	"github.com/abhishek-z2/shrnk/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -28,15 +31,28 @@ type URLCache interface {
 	Set(ctx context.Context, key string, value string, ttl time.Duration) error
 }
 
-type Handler struct {
-	store URLStore
-	cache URLCache
+type AuthStore interface {
+	CreateUserWithSession(
+		ctx context.Context,
+		email string,
+		passwordHash string,
+		sessionID uuid.UUID,
+		tokenHash string,
+		expiresAt time.Time,
+	) (store.User, error)
 }
 
-func NewHandler(store URLStore, cache URLCache) *Handler {
+type Handler struct {
+	store     URLStore
+	cache     URLCache
+	authStore AuthStore
+}
+
+func NewHandler(store URLStore, cache URLCache, authStore AuthStore) *Handler {
 	return &Handler{
-		store: store,
-		cache: cache,
+		store:     store,
+		cache:     cache,
+		authStore: authStore,
 	}
 }
 
@@ -47,6 +63,11 @@ type ShortenRequest struct {
 
 type ShortenResponse struct {
 	ShortCode string `json:"short_code"`
+}
+
+type SignupRequest struct {
+	Email    string `json:"email"`
+	Password string `json:"password"`
 }
 
 func (h *Handler) Shorten(w http.ResponseWriter, r *http.Request) {
@@ -123,4 +144,78 @@ func (h *Handler) Redirect(w http.ResponseWriter, r *http.Request) {
 		log.Printf("failed to cache URL %q: %v", code, err)
 	}
 	http.Redirect(w, r, record.LongURL, http.StatusFound)
+}
+
+func (h *Handler) Signup(w http.ResponseWriter, r *http.Request) {
+	var req SignupRequest
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20) // limit the body so that clients cant send arbitrarily large payloads (ddos attacks)
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	email := strings.ToLower(strings.TrimSpace(req.Email))
+	if email == "" || !strings.Contains(email, "@") {
+		http.Error(w, "valid email is required", http.StatusBadRequest)
+		return
+	}
+
+	if len(req.Password) < 8 {
+		http.Error(w, "password must be at least 8 characters", http.StatusBadRequest)
+		return
+	}
+
+	passwordHash, err := auth.HashPassword(req.Password)
+	if err != nil {
+		log.Printf("hash password: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	token, err := auth.GenerateSessionToken()
+	if err != nil {
+		log.Printf("generate session token: %v", err)
+		http.Error(w, "internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	const sessionLifetime = 7 * 24 * time.Hour
+	sessionID := uuid.New()
+	tokenHash := auth.HashSessionToken(token)
+	expiresAt := time.Now().Add(sessionLifetime)
+
+	_, err = h.authStore.CreateUserWithSession(
+		r.Context(),
+		email,
+		passwordHash,
+		sessionID,
+		tokenHash,
+		expiresAt,
+	)
+
+	if err != nil {
+		log.Printf("create user with session: %v", err)
+		http.Error(w, "could not create account", http.StatusConflict)
+		return
+	}
+
+	http.SetCookie(
+		w,
+		&http.Cookie{
+			Name:     "session",
+			Value:    token,
+			Path:     "/",
+			HttpOnly: true,
+			Secure:   false, //set true in production
+			SameSite: http.SameSiteLaxMode,
+			Expires:  expiresAt,
+		})
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(map[string]string{ // use map when sending one-off payloads (like alerts,succes messages)
+		"message": "account created",
+	})
 }

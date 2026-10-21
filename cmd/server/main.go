@@ -49,7 +49,7 @@ func main() {
 
 	db := store.NewPostgresStore(pool)
 	rdb := cache.NewRedisCache(redisClient)
-	h := handlers.NewHandler(db, rdb)
+	h := handlers.NewHandler(db, rdb, db)
 	r := chi.NewRouter()
 	l := ratelimit.NewRateLimiter(redisClient)
 	s := sweeper.New(db)
@@ -58,6 +58,8 @@ func main() {
 		auth.Middleware(db),
 		ratelimit.Middleware(l),
 	).Post("/api/shorten", h.Shorten)
+
+	r.Post("/api/auth/signup", h.Signup)
 
 	r.Get("/{code}", h.Redirect)
 

@@ -13,6 +13,7 @@ import (
 
 	"github.com/abhishek-z2/shrnk/internal/store"
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -65,7 +66,7 @@ func TestRedirect_CacheHit(t *testing.T) {
 	}
 	store := &fakeStore{}
 
-	h := NewHandler(nil, cache)
+	h := NewHandler(nil, cache, nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("code", "abc123")
@@ -103,7 +104,7 @@ func TestRedirect_CacheMiss(t *testing.T) {
 		err: redis.Nil,
 	}
 
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("code", "abc123")
@@ -148,7 +149,7 @@ func TestRedirect__NotFound(t *testing.T) {
 		err: redis.Nil,
 	}
 
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("code", "missing")
@@ -184,7 +185,7 @@ func TestRedirect_ExpiredURL(t *testing.T) {
 		err: redis.Nil,
 	}
 
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("code", "expired")
@@ -219,7 +220,7 @@ func TestRedirect_CacheError(t *testing.T) {
 		err: errors.New("redis connection failed"),
 	}
 
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	rctx := chi.NewRouteContext()
 	rctx.URLParams.Add("code", "abc123")
@@ -248,7 +249,7 @@ func TestShorten_InvalidJSON(t *testing.T) {
 	store := &fakeStore{}
 	cache := &fakeCache{}
 
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -272,7 +273,7 @@ func TestShorten_MissingURL(t *testing.T) {
 	store := &fakeStore{}
 	cache := &fakeCache{}
 
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -297,7 +298,7 @@ func TestShorten_MissingURL(t *testing.T) {
 func TestShorten_InvalidExpiresIn(t *testing.T) {
 	store := &fakeStore{}
 	cache := &fakeCache{}
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -321,7 +322,7 @@ func TestShorten_InvalidExpiresIn(t *testing.T) {
 func TestShorten_ExpiresInTooShort(t *testing.T) {
 	store := &fakeStore{}
 	cache := &fakeCache{}
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -345,7 +346,7 @@ func TestShorten_ExpiresInTooShort(t *testing.T) {
 func TestShorten_ExpiresInTooLong(t *testing.T) {
 	store := &fakeStore{}
 	cache := &fakeCache{}
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -371,7 +372,7 @@ func TestShorten_Success(t *testing.T) {
 		createShortCode: "abc123",
 	}
 	cache := &fakeCache{}
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -423,7 +424,7 @@ func TestShorten_StoreError(t *testing.T) {
 		createErr: errors.New("database connection failed"),
 	}
 	cache := &fakeCache{}
-	h := NewHandler(store, cache)
+	h := NewHandler(store, cache, nil)
 
 	req := httptest.NewRequest(
 		http.MethodPost,
@@ -450,3 +451,140 @@ func TestShorten_StoreError(t *testing.T) {
 /*func TestRedirect_ExpiredURL(t *testing.T) {
 
 }*/
+
+type fakeAuthStore struct {
+	createUserWithSessionFunc func(
+		ctx context.Context,
+		email string,
+		passwordHash string,
+		sessionID uuid.UUID,
+		tokenHash string,
+		expiresAt time.Time,
+	) (store.User, error)
+}
+
+func (f *fakeAuthStore) CreateUserWithSession(
+	ctx context.Context,
+	email string,
+	passwordHash string,
+	sessionID uuid.UUID,
+	tokenHash string,
+	expiresAt time.Time,
+) (store.User, error) {
+	return f.createUserWithSessionFunc(
+		ctx,
+		email,
+		passwordHash,
+		sessionID,
+		tokenHash,
+		expiresAt,
+	)
+}
+
+func TestHandler_Signup(t *testing.T) {
+	var receivedEmail string
+	var receivedPasswordHash string
+	var receivedSessionID uuid.UUID
+	var receivedTokenHash string
+	var receivedExpiresAt time.Time
+
+	authStore := &fakeAuthStore{
+		createUserWithSessionFunc: func(
+			ctx context.Context,
+			email string,
+			passwordHash string,
+			sessionID uuid.UUID,
+			tokenHash string,
+			expiresAt time.Time,
+		) (store.User, error) {
+			receivedEmail = email
+			receivedPasswordHash = passwordHash
+			receivedSessionID = sessionID
+			receivedTokenHash = tokenHash
+			receivedExpiresAt = expiresAt
+
+			return store.User{
+				ID:           1,
+				Email:        email,
+				PasswordHash: passwordHash,
+				CreatedAt:    time.Now(),
+			}, nil
+		},
+	}
+
+	h := NewHandler(nil, nil, authStore)
+
+	body := `{"email":"test@example.com","password":"test-password-123"}`
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/api/auth/signup",
+		strings.NewReader(body),
+	)
+
+	rec := httptest.NewRecorder()
+
+	h.Signup(rec, req)
+
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected status 201, got %d", rec.Code)
+	}
+
+	if receivedEmail != "test@example.com" {
+		t.Errorf(
+			"expected email %q, got %q",
+			"test@example.com",
+			receivedEmail,
+		)
+	}
+
+	// The plaintext password must never reach the store.
+	if receivedPasswordHash == "test-password-123" {
+		t.Error("password was stored as plaintext")
+	}
+
+	if receivedPasswordHash == "" {
+		t.Error("expected password hash to be provided")
+	}
+
+	if receivedSessionID == uuid.Nil {
+		t.Error("expected session ID to be generated")
+	}
+
+	if receivedTokenHash == "" {
+		t.Error("expected session token hash to be provided")
+	}
+
+	if receivedExpiresAt.Before(time.Now()) {
+		t.Error("expected session expiration to be in the future")
+	}
+
+	// Check the cookie returned to the browser.
+	cookies := rec.Result().Cookies()
+
+	if len(cookies) != 1 {
+		t.Fatalf("expected 1 cookie, got %d", len(cookies))
+	}
+
+	cookie := cookies[0]
+
+	if cookie.Name != "session" {
+		t.Errorf("expected cookie name %q, got %q", "session", cookie.Name)
+	}
+
+	if cookie.Value == "" {
+		t.Error("expected session cookie to contain a token")
+	}
+
+	if !cookie.HttpOnly {
+		t.Error("expected session cookie to be HttpOnly")
+	}
+
+	if cookie.SameSite != http.SameSiteLaxMode {
+		t.Errorf("expected SameSite=Lax, got %v", cookie.SameSite)
+	}
+
+	if cookie.Path != "/" {
+		t.Errorf("expected cookie path /, got %q", cookie.Path)
+	}
+}
