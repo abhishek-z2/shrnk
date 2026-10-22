@@ -10,7 +10,10 @@ import (
 
 type contextKey string
 
-const apiKeyIDKey contextKey = "apiKeyID"
+const (
+	apiKeyIDKey contextKey = "apiKeyID"
+	userIDKey   contextKey = "userID"
+)
 
 func Middleware(db *store.PostgresStore) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
@@ -45,4 +48,10 @@ func GetAPIKeyID(ctx context.Context) (uuid.UUID, bool) {
 
 	apiKeyID, ok := value.(uuid.UUID)
 	return apiKeyID, ok
+}
+
+func GetUserID(ctx context.Context) (int64, bool) {
+	value := ctx.Value(userIDKey)
+	userID, ok := value.(int64)
+	return userID, ok
 }
