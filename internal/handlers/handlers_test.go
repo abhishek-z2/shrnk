@@ -475,6 +475,10 @@ type fakeAuthStore struct {
 		tokenHash string,
 		expiresAt time.Time,
 	) error
+	getUserByIDFunc func(
+		ctx context.Context,
+		id int64,
+	) (store.User, error)
 }
 
 func (f *fakeAuthStore) CreateUserWithSession(
@@ -518,6 +522,16 @@ func (f *fakeAuthStore) GetUserByEmail(
 	return f.getUserByEmailFunc(ctx, email)
 }
 
+func (f *fakeAuthStore) GetUserByID(
+	ctx context.Context,
+	id int64,
+) (store.User, error) {
+	if f.getUserByIDFunc != nil {
+		return f.getUserByIDFunc(ctx, id)
+	}
+
+	return store.User{}, store.ErrNotFound
+}
 func TestHandler_Signup(t *testing.T) {
 	var receivedEmail string
 	var receivedPasswordHash string

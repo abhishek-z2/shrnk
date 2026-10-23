@@ -54,14 +54,17 @@ func main() {
 	l := ratelimit.NewRateLimiter(redisClient)
 	s := sweeper.New(db)
 
+	r.Get("/{code}", h.Redirect)
+	r.With(
+		auth.SessionMiddleware(db),
+	).Get("/api/auth/me", h.Me)
+
 	r.With(
 		auth.Middleware(db),
 		ratelimit.Middleware(l),
 	).Post("/api/shorten", h.Shorten)
 	r.Post("/api/auth/signup", h.Signup)
 	r.Post("/api/auth/login", h.Login)
-
-	r.Get("/{code}", h.Redirect)
 
 	server := &http.Server{
 		Addr:    ":8080",

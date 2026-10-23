@@ -51,6 +51,10 @@ type AuthStore interface {
 		tokenHash string,
 		expiresAt time.Time,
 	) error
+	GetUserByID(
+		ctx context.Context,
+		userID int64,
+	) (store.User, error)
 }
 
 type Handler struct {
@@ -308,4 +312,42 @@ func (h *Handler) Login(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]string{
 		"message": "login successful",
 	})
+}
+
+// me handler
+
+type MeResponse struct {
+	ID    int64  `json:"id"`
+	Email string `json:"email"`
+}
+
+func (h *Handler) Me(w http.ResponseWriter, r *http.Request) {
+	userID, ok := auth.GetUserID(r.Context())
+
+	if !ok {
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		return
+	}
+
+	user, err := h.authStore.GetUserByID(
+		r.Context(),
+		userID,
+	)
+
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			http.Error(w, "user not found", http.StatusNotFound)
+			return
+		}
+
+		http.Error(w, "failed to get user", http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(MeResponse{
+		ID:    userID,
+		Email: user.Email,
+	})
+
 }

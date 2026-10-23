@@ -126,3 +126,32 @@ func (s *PostgresStore) CreateUserWithSession(
 
 	return user, nil
 }
+
+func (s *PostgresStore) GetUserByID(
+	ctx context.Context,
+	userID int64,
+) (User, error) {
+	var user User
+
+	err := s.db.QueryRow(
+		ctx,
+		`SELECT id,email,password_hash,created_at
+		FROM users
+		WHERE id = $1`,
+		userID,
+	).Scan(
+		&user.ID,
+		&user.Email,
+		&user.PasswordHash,
+		&user.CreatedAt,
+	)
+
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrNotFound
+	}
+	if err != nil {
+		return User{}, err
+	}
+
+	return user, nil
+}
